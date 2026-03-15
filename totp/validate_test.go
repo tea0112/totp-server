@@ -58,6 +58,12 @@ func TestValidateWithUserDelay(t *testing.T) {
 			shouldValid: false,
 		},
 		{
+			name:        "user delay 180 seconds with 1min period (3 windows later)",
+			period:      60,
+			fixedDelay:  60 * 3 * time.Second,
+			shouldValid: false,
+		},
+		{
 			name:        "user delay 150 seconds with 5min period (same window)",
 			period:      300,
 			fixedDelay:  150 * time.Second,
