@@ -1,4 +1,4 @@
-module totp-app
+module totp-server
 
 go 1.21
 

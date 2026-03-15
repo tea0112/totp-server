@@ -4,8 +4,8 @@ import (
 	"log"
 	"net/http"
 
-	"totp-app/config"
-	"totp-app/totp"
+	"totp-server/config"
+	"totp-server/totp"
 )
 
 func main() {

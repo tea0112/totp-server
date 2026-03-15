@@ -38,41 +38,33 @@ Window = floor(unix_timestamp / period)
 
 ## 2. Giải thích test case
 
-### Code trong test:
+### Code trong test (sử dụng time cố định):
 
 ```go
-genTime := time.Now()                          // Bước 1: Lưu thời điểm hiện tại
-service.Generate("test@example.com")           // Bước 2: Tạo TOTP (log code ra console)
-secret, _ := store.Get("test@example.com")    // Bước 3: Lấy secret
+baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 
-code, _ := service.GenerateCode(secret, genTime)  // Bước 4: Tạo lại code với cùng thời điểm
+// Server tạo TOTP tại thời điểm baseTime
+service.Generate("test@example.com")
+secret, _ := store.Get("test@example.com")
+
+// Tạo lại code với cùng thời điểm baseTime
+code, _ := service.GenerateCode(secret, baseTime)
 ```
 
 ### Tại sao 2 lần gọi tạo ra CÙNG một mã?
 
-**Bước 2: `service.Generate()`**
-- Bên trong hàm này, code được tạo bằng `totp.GenerateCodeCustom(secret, now, ...)`
-- `now` = thời điểm `service.Generate()` được gọi = `genTime`
+- `service.Generate()` bên trong gọi `GenerateCodeCustom(secret, time.Now(), ...)`
+- Nhưng chúng ta sử dụng `baseTime` cố định để tạo lại code
+- **Cùng thời điểm** → **Cùng window** → **Cùng mã TOTP**
 
-**Bước 4: `service.GenerateCode(secret, genTime)`**
-- Chúng ta truyền vào `genTime` - cùng một thời điểm với Bước 2!
-- Vì cùng thời điểm → cùng window → **cùng mã TOTP**
-
-**Minh họa:**
+**Minh họa với baseTime = 10:00:00:**
 
 ```
-Giả sử time.Now() = 15:45:30 (timestamp = X)
+Tạo lúc: 10:00:00 → window = floor(10:00:00 / 60) = 1000
+Code: ABC123
 
-Bước 2: service.Generate() gọi
-         → GenerateCode(secret, X) 
-         → window = floor(X/60) = 100
-         → mã = ABC123
-         → Log: "Code at 15:45:30: ABC123"
-
-Bước 4: service.GenerateCode(secret, genTime)  
-         → genTime = X (cùng timestamp!)
-         → window = floor(X/60) = 100
-         → mã = ABC123 (TRÙNG!)
+Tạo lại với baseTime: 10:00:00 → window = floor(10:00:00 / 60) = 1000
+Code: ABC123 (TRÙNG!)
 ```
 
 ---
@@ -91,30 +83,30 @@ Bước 4: service.GenerateCode(secret, genTime)
 
 ## 4. Các test cases trong file
 
+Sử dụng `time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)` để đảm bảo deterministic.
+
 ### Test: `valid at exact creation time`
 ```go
-genTime := time.Now()           // 15:45:30
-code := GenerateCode(secret, genTime)  // window = 100, mã = ABC123
-valid := Validate(code, 15:45:30)      // verify tại 15:45:30 → window = 100 → ✓ VALID
+baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+code := GenerateCode(secret, baseTime)  // window = 1000, mã = ABC123
+valid := ValidateAt(code, baseTime)     // verify tại 10:00:00 → window = 1000 → ✓ VALID
 ```
 
 ### Test: `invalid at 6min after creation with period=300`
 ```go
-genTime := time.Now()           // 15:45:30
-code := GenerateCode(secret, genTime)  // window = floor(15:45:30/300) = 188
-valid := Validate(code, 15:51:30)      // verify tại 15:51:30 → window = floor(15:51:30/300) = 189 → ✗ INVALID
+baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+code := GenerateCode(secret, baseTime)    // window = floor(10:06:00 / 300) = 20
+validateTime := baseTime.Add(6 * time.Minute)
+valid := ValidateAt(code, validateTime) // verify tại 10:06:00 → window = 21 → ✗ INVALID
 ```
 
 ### Test: `verify at 30sec with period 60 - same window`
 ```go
-genTime := time.Now()           // 15:45:30
-code := GenerateCode(secret, genTime)  // window = floor(15:45:30/60) = 945
-valid := Validate(code, 15:46:00)      // verify tại 15:46:00 → window = floor(15:46:00/60) = 946 → ✗ INVALID (khác window!)
+baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+code := GenerateCode(secret, baseTime)    // window = floor(10:00:30 / 60) = 1000
+validateTime := baseTime.Add(30 * time.Second)
+valid := ValidateAt(code, validateTime)  // verify tại 10:00:30 → window = 1000 → ✓ VALID (cùng window)
 ```
-
-**Lưu ý:** Test 30s với period=60 fail vì:
-- 15:45:30 → window 945
-- 15:46:00 → window 946 (đã sang window mới!)
 
 ---
 
@@ -144,15 +136,16 @@ User đợi delay (5-30s)     → Mở email, đọc mã
 User submit code tại T+delay → Server validate tại T+delay
 ```
 
-### Code test:
+### Code test (sử dụng time cố định):
 
 ```go
+baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
 // Time T: Server tạo và gửi code cho user
-genTime := time.Now()
-code, _ := service.GenerateCode(secret, genTime)
+code, _ := service.GenerateCode(secret, baseTime)
 
 // Time T + delay: User nhập code sau khi đợi delay
-validateTime := genTime.Add(tt.fixedDelay)
+validateTime := baseTime.Add(tt.fixedDelay)
 valid, _ := service.ValidateAt("test@example.com", code, validateTime)
 ```
 
