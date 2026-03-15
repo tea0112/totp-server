@@ -77,6 +77,7 @@ func TestValidateWithUserDelay(t *testing.T) {
 		},
 	}
 
+	baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			store := NewStore()
@@ -93,7 +94,7 @@ func TestValidateWithUserDelay(t *testing.T) {
 			secret := key.Secret()
 			store.Set("test@example.com", secret)
 
-			genTime := time.Now()
+			genTime := baseTime
 			code, _ := service.GenerateCode(secret, genTime)
 
 			validateTime := genTime.Add(tt.fixedDelay)
@@ -108,6 +109,8 @@ func TestValidateWithUserDelay(t *testing.T) {
 }
 
 func TestValidateWithPeriod(t *testing.T) {
+	baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
 	tests := []struct {
 		name        string
 		period      uint
@@ -157,10 +160,18 @@ func TestValidateWithPeriod(t *testing.T) {
 			store := NewStore()
 			service := NewService(store, tt.period)
 
-			service.Generate("test@example.com")
-			secret, _ := store.Get("test@example.com")
+			key, _ := totp.Generate(totp.GenerateOpts{
+				Issuer:      "TOTPApp",
+				AccountName: "test",
+				Algorithm:   otp.AlgorithmSHA1,
+				Digits:      otp.DigitsSix,
+				Period:      tt.period,
+				SecretSize:  20,
+			})
+			secret := key.Secret()
+			store.Set("test@example.com", secret)
 
-			genTime := time.Now()
+			genTime := baseTime
 			code, _ := service.GenerateCode(secret, genTime)
 
 			validateTime := genTime.Add(tt.timeOffset)
@@ -175,6 +186,8 @@ func TestValidateWithPeriod(t *testing.T) {
 }
 
 func TestValidateFailureCases(t *testing.T) {
+	baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
 	tests := []struct {
 		name        string
 		setup       func(*Store) string
@@ -184,8 +197,16 @@ func TestValidateFailureCases(t *testing.T) {
 		{
 			name: "wrong code",
 			setup: func(s *Store) string {
-				service := NewService(s, 300)
-				service.Generate("test@example.com")
+				key, _ := totp.Generate(totp.GenerateOpts{
+					Issuer:      "TOTPApp",
+					AccountName: "test",
+					Algorithm:   otp.AlgorithmSHA1,
+					Digits:      otp.DigitsSix,
+					Period:      300,
+					SecretSize:  20,
+				})
+				secret := key.Secret()
+				s.Set("test@example.com", secret)
 				return "000000"
 			},
 			code:        "000000",
@@ -194,9 +215,22 @@ func TestValidateFailureCases(t *testing.T) {
 		{
 			name: "non-existent account",
 			setup: func(s *Store) string {
-				service := NewService(s, 300)
-				service.Generate("other@example.com")
-				return "123456"
+				key, _ := totp.Generate(totp.GenerateOpts{
+					Issuer:      "TOTPApp",
+					AccountName: "other",
+					Algorithm:   otp.AlgorithmSHA1,
+					Digits:      otp.DigitsSix,
+					Period:      300,
+					SecretSize:  20,
+				})
+				secret := key.Secret()
+				s.Set("other@example.com", secret)
+				code, _ := totp.GenerateCodeCustom(secret, baseTime, totp.ValidateOpts{
+					Period:    300,
+					Digits:    otp.DigitsSix,
+					Algorithm: otp.AlgorithmSHA1,
+				})
+				return code
 			},
 			code:        "123456",
 			shouldValid: false,
@@ -218,6 +252,8 @@ func TestValidateFailureCases(t *testing.T) {
 }
 
 func TestGenerateCodeLength(t *testing.T) {
+	baseTime := time.Date(2024, 1, 15, 10, 0, 0, 0, time.UTC)
+
 	tests := []struct {
 		name   string
 		period uint
@@ -242,7 +278,7 @@ func TestGenerateCodeLength(t *testing.T) {
 			})
 			secret := key.Secret()
 
-			code, _ := service.GenerateCode(secret, time.Now())
+			code, _ := service.GenerateCode(secret, baseTime)
 
 			if len(code) != 6 {
 				t.Errorf("expected 6 digits, got %d", len(code))
